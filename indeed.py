@@ -1,5 +1,7 @@
-import scrapy
 import re
+import hashlib
+from scrapy.http import HtmlResponse
+import scrapy
 
 class ReviewsSpider(scrapy.Spider):
     name = "indeed"
@@ -9,14 +11,15 @@ class ReviewsSpider(scrapy.Spider):
     ]
 
     data = {}
-    reviews, pageNum, title_list, rating_list, name_list, date_list, avatar_list, desc_list, source_list = ([] for x in range(9))
+    reviews = []
+    pagination = []
         
     def __init__(self):
         self.called = False
         
     def parse(self, response):
 
-        global data, reviews, pageNum, title_list, rating_list, name_list, date_list, avatar_list, desc_list, source_list 
+        global data, reviews, pageNum
         
         if not self.called:
             self.called = True
@@ -37,44 +40,75 @@ class ReviewsSpider(scrapy.Spider):
                 for nextpage in next_pages:
                     paginationNum = re.findall(r'[0-9]+', nextpage)
                     number = paginationNum[0]
-                    if number not in self.pageNum:
-                        self.pageNum.append(number)
+                    if number not in self.pagination:
+                        self.pagination.append(number)
        
-            self.pageNum.sort()
+            self.pagination.sort()
             
-        for title in response.css('div.cmp-Review-title a::text').getall():
-            self.title_list.append(re.sub(u"(\u2018|\u2019)", "'", title))
-            self.name_list.append("")
-            self.avatar_list.append("")
-            self.date_list.append("")
-            self.desc_list.append("")
-            self.source_list.append("")
+        for tag in response.css('div[data-testid="reviewsList"] div[itemprop="review"]').getall():
+            tag_response = HtmlResponse(url="HTML string", body=tag, encoding='utf-8')
+            try:
+                date_ = tag_response.css('div.cmp-Review-content div.cmp-Review-author span[itemprop="author"]::text').get()
+            except:
+                date_ = ''
+            
+            try:
+                text_list =[]
+                name_ = ''
+                source_ = ''
+                for author in tag_response.css('div.cmp-Review-container div.cmp-Review-content div.cmp-Review-author a::text').getall():
+                    text_list.append(author)
+                if len(text_list) == 1:
+                    name_ = text_list[0]
+                    source_ = ''
+                if len(text_list) == 2:
+                    name_ = text_list[0]
+                    source_ = text_list[1]
+            except:
+                name_ = ''
+                source_ = ''
+            try:
+                title_ = tag_response.css('div.cmp-Review-content div.cmp-Review-title a::text').get() 
+            except:
+                title_ = ''
+            try:
+                rating_ = tag_response.css('div[itemprop="reviewRating"] button.cmp-ReviewRating-text::text').get()
+            except:
+                rating_ = ''
+            try:
+                desc_text = []
+                for text in tag_response.css('div.cmp-Review-content div.cmp-Review-text span[itemprop="reviewBody"] span.cmp-NewLineToBr span.cmp-NewLineToBr-text::text').getall():
+                    try:
+                        desc_text.append(text)
+                    except:
+                        pass
+                review_ = ': '.join(desc_text)
+            except:
+                review_ = ''
+            
+            data_items = {}
 
-        
-        #for date in response.css("a.cmp-ReviewAuthor-link::text").getall():
-            #yield{'date':date}
-        
-        for ratings in response.css("button.cmp-ReviewRating-text::text").getall():
-            self.rating_list.append(ratings)
+            data_items['name'] = name_
+            data_items['date'] = date_
+            data_items['avatar'] = avatar_
+            data_items['rating'] = rating_
+            data_items['title'] = title_
+            data_items['description'] = review_
+            data_items['source'] = source_
+            
+            strId = f'{name_}{date_}'
+            #Assumes the default UTF-8
+            hash_object = hashlib.md5(strId.encode())
+            data_items['reviewId'] = hash_object.hexdigest()
 
-        if len(self.pageNum) > 0:
-            page = "?start=" + self.pageNum[0]
-            self.pageNum.pop(0)
+            self.reviews.append(data_items)
+
+        if len(self.pagination) > 0:
+            page = "?start=" + self.pagination[0]
+            self.pagination.pop(0)
             yield response.follow(page, callback=self.parse)
         else:
-           
-            keys = ['name','date','avatar','rating','title','description','source']
-            zip_lists = list(zip(self.name_list, self.date_list, self.avatar_list, self.rating_list, self.title_list, self.desc_list, self.source_list))
-            for item in zip_lists: 
-                self.reviews.append(dict(list(zip(keys, item))))
                     
-            self.data["reviews"] = self.reviews
-                
+            self.data["reviews"] = self.reviews   
             yield self.data
-
-        
-        
-        
-
-        
 
